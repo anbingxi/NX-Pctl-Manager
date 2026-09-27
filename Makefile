@@ -10,10 +10,15 @@ BUILD  := build
 # builds correctly updates the CMake cache (cmake is a no-op when nothing
 # changed, so re-running it every time is cheap).
 CMAKE_FLAGS := -DPLATFORM_SWITCH=ON
-ifneq ($(strip $(PROBE)),)
+ifeq ($(strip $(PROBE)),1)
 	CMAKE_FLAGS += -DPCTL_PROBE=ON
 else
 	CMAKE_FLAGS += -DPCTL_PROBE=OFF
+endif
+ifeq ($(strip $(READ_ONLY)),1)
+	CMAKE_FLAGS += -DPCTL_READ_ONLY=ON
+else
+	CMAKE_FLAGS += -DPCTL_READ_ONLY=OFF
 endif
 
 .PHONY: all clean dist nxlink

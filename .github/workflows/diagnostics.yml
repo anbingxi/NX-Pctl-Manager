@@ -1,0 +1,34 @@
+name: diagnostic build
+
+on:
+  push:
+    branches: [ 'diag/**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build read-only probe
+        run: docker run --rm -v "$PWD:/project" -w /project devkitpro/devkita64 make PROBE=1 READ_ONLY=1 dist
+      - name: Record build identity
+        run: |
+          git rev-parse HEAD > build-info.txt
+          git submodule status --recursive >> build-info.txt
+          printf 'PROBE=1 READ_ONLY=1\n' >> build-info.txt
+          sha256sum nx_pctl_manager.nro nx_pctl_manager.zip > SHA256SUMS.txt
+      - name: Upload diagnostic files
+        uses: actions/upload-artifact@v4
+        with:
+          name: nx_pctl_diagnostics
+          path: |
+            nx_pctl_manager.nro
+            nx_pctl_manager.zip
+            build-info.txt
+            SHA256SUMS.txt

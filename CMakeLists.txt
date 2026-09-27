@@ -23,6 +23,7 @@ set(PROJECT_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/resources)
 # Optional: include the read-only "Dump current config" diagnostic item
 # (mirrors the legacy `make PROBE=1`). Off by default; pass -DPCTL_PROBE=ON.
 option(PCTL_PROBE "Include the read-only diagnostic dump menu item" OFF)
+option(PCTL_READ_ONLY "Disable all parental-control changes" OFF)
 
 # Build borealis as a static library at <build>/borealis_library/.
 add_subdirectory(${BOREALIS_LIBRARY} ${CMAKE_BINARY_DIR}/borealis_library)
@@ -51,6 +52,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE borealis ${APP_PLATFORM_LIB})
 if (PCTL_PROBE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE PCTL_PROBE=1)
 endif ()
+if (PCTL_READ_ONLY)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PCTL_READ_ONLY=1)
+endif ()
 
 # .nro packaging — mirrors extern/borealis/CMakeLists.txt's Switch branch
 # (nacptool → assemble RomFS → elf2nro).
@@ -62,11 +66,16 @@ endif ()
 #   - resources/img/pokemon/ — demo-only (~1.6 MB saved)
 #   - resources/xml/         — demo-only (built-in widgets use inlined XML strings)
 if (PLATFORM_SWITCH)
+    if (PCTL_READ_ONLY)
+        set(PCTL_APP_TITLE "Pctl Diagnostics")
+    else ()
+        set(PCTL_APP_TITLE "Pctl Manager")
+    endif ()
     set(BOREALIS_RESOURCES ${BOREALIS_LIBRARY}/../resources)
     add_custom_target(${PROJECT_NAME}.nro ALL DEPENDS ${PROJECT_NAME}
         # Display name shown in hbmenu (the actual repo / project name is still
         # NX-Pctl-Manager — see set(PROJECT_NAME ...) above).
-        COMMAND ${NX_NACPTOOL_EXE} --create "Pctl Manager" "${PROJECT_AUTHOR}"
+        COMMAND ${NX_NACPTOOL_EXE} --create "${PCTL_APP_TITLE}" "${PROJECT_AUTHOR}"
                 "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_ALTER}"
                 ${PROJECT_NAME}.nacp --titleid=${PROJECT_TITLEID}
         # Borealis built-ins first …

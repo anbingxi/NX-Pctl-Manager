@@ -11,6 +11,7 @@ using namespace brls::literals;   // for "key"_i18n
 
 namespace
 {
+#ifndef PCTL_READ_ONLY
 // Common shape for the two destructive cells (delete-all / unlink):
 //   show a confirm Dialog → on confirm run `action` → toast result → refresh the panel.
 // `error_prefix` is the lead text for failure ("Could not X"); the Result code is appended.
@@ -32,6 +33,7 @@ void run_destructive(const std::string& body, const std::string& confirm_label,
     });
     dialog->open();
 }
+#endif
 }   // namespace
 
 void MainActivity::onContentAvailable()
@@ -45,6 +47,11 @@ void MainActivity::onContentAvailable()
         return true;
     });
 
+#ifdef PCTL_READ_ONLY
+    this->item_delete_pc->setVisibility(brls::Visibility::GONE);
+    this->item_unlink->setVisibility(brls::Visibility::GONE);
+    this->item_set_pin->setVisibility(brls::Visibility::GONE);
+#else
     // Delete all parental controls (cmd 1043) — step (d), destructive, confirm-gated.
     this->item_delete_pc->registerClickAction([this](brls::View*) {
         run_destructive(
@@ -68,6 +75,7 @@ void MainActivity::onContentAvailable()
             this->status_panel.getView());
         return true;
     });
+#endif
 
     // Play timer (daily limit) — step (e): push the sub-Activity.
     this->item_play_timer->registerClickAction([](brls::View*) {
@@ -75,6 +83,7 @@ void MainActivity::onContentAvailable()
         return true;
     });
 
+#ifndef PCTL_READ_ONLY
     // Set / change PIN — step (f). pctl_set_pin() pops the pctlauth applet
     // (it's already wrapped in pctlExit/pctlauthRegisterPasscode/pctlInitialize
     // inside pctl_ops.c — that bracket is required on some firmware versions).
@@ -100,6 +109,7 @@ void MainActivity::onContentAvailable()
         }
         return true;
     });
+#endif
 
     // First read of the status panel — onResume runs it again on every entry,
     // but a freshly created Activity doesn't get an onResume call.

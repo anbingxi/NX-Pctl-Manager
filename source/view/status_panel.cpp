@@ -26,7 +26,7 @@ std::string fmt_pin(const PctlStatus& s)
 // configured-limit detail when the timer is on.
 std::string fmt_play_timer(const PtState& pt)
 {
-    if (!pt.valid)    return UNAVAILABLE;
+    if (!pt.valid || !pt.enabled_valid) return UNAVAILABLE;
     if (!pt.enabled)  return "no";
 
     bool any = false, uniform = true;
@@ -36,7 +36,7 @@ std::string fmt_play_timer(const PtState& pt)
     }
 
     if (!any)                                    return "yes";
-    if (uniform && pt.day_min[0] == 0)           return "yes — every day blocked";
+    if (uniform && pt.day_min[0] == 0)           return "yes — configured 0 min/day (game behavior unverified)";
     if (uniform) {
         char buf[32];
         std::snprintf(buf, sizeof(buf), "yes — %u min/day", (unsigned)pt.day_min[0]);

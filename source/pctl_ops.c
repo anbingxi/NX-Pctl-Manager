@@ -7,6 +7,11 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+// This error is returned before opening an applet or sending a mutating IPC.
+#ifdef PCTL_READ_ONLY
+#define PCTL_READ_ONLY_ERROR ((Result)0xF001)
+#endif
+
 /*
  * Command IDs for IParentalControlService.
  * Reference: https://switchbrew.org/wiki/Parental_Control_services
@@ -80,6 +85,9 @@ void pctl_status_fetch(PctlStatus *out)
 
 Result pctl_set_pin(void)
 {
+#ifdef PCTL_READ_ONLY
+    return PCTL_READ_ONLY_ERROR;
+#else
     // The pctlauth applet opens its own privileged pctl session; on some firmware
     // versions that fails while our process still holds one, so drop ours around
     // the call (this exit/init dance is needed).
@@ -87,45 +95,32 @@ Result pctl_set_pin(void)
     Result rc = pctlauthRegisterPasscode();
     pctlInitialize();   // re-open our session; a failure here surfaces on the next op
     return rc;
+#endif
 }
 
 Result pctl_delete_parental_controls(void)
 {
+#ifdef PCTL_READ_ONLY
+    return PCTL_READ_ONLY_ERROR;
+#else
     return serviceDispatch(pctlGetServiceSession_Service(), 1043);
+#endif
 }
 
 Result pctl_delete_pairing(void)
 {
+#ifdef PCTL_READ_ONLY
+    return PCTL_READ_ONLY_ERROR;
+#else
     return serviceDispatch(pctlGetServiceSession_Service(), 1941);
+#endif
 }
 
 Result pctl_unlock_restriction_temporarily(void)
 {
-    // Temporarily lift the parental-control restriction (cmd 1201). Verified on
-    // fw 22.1.0. Two things had to be right (both learned the hard way):
-    //  - the buffer descriptors are HIPC *pointer* buffers ("type 0x9"/"0xA" in
-    //    SupercellNx's generated pctl IPC stubs == SfBufferAttr_In|HipcPointer /
-    //    Out|HipcPointer), not map-alias — sending map-alias makes the sysmodule
-    //    drop the session (0xF601);
-    //  - the PIN must be passed NUL-terminated (digits + '\0', i.e. GetPinCodeLength
-    //    + 1 bytes) — sending just the digits returns 0xF80E.
-    // We read the current PIN with GetPinCode (1208) and hand it back, so this works
-    // even if the user has forgotten it (we hold a privileged pctl session under CFW).
-    pctl_ops_reinit();
-    Service *srv = pctlGetServiceSession_Service();
-
-    char pin[32];
-    memset(pin, 0, sizeof(pin));
-    u32 pin_len = 0;                                                       // GetPinCode (1208): out u32 (length) + out pointer buffer (digits + null-pad)
-    Result rc = serviceDispatchOut(srv, 1208, pin_len,
-        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_Out },
-        .buffers      = { { pin, sizeof(pin) } });
-    if (R_FAILED(rc)) return rc;
-
-    size_t n = (pin_len > 0 && pin_len < (u32)sizeof(pin)) ? ((size_t)pin_len + 1) : sizeof(pin);  // PIN + the trailing '\0'
-    return serviceDispatch(srv, 1201,                                      // UnlockRestrictionTemporarily <- PIN pointer buffer
-        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
-        .buffers      = { { pin, n } });
+    // The caller must complete any temporary unlock in the system PIN UI.
+    // A management tool cannot authenticate a parent by reading the saved PIN.
+    return (Result)0xF001;
 }
 
 const char *pctl_safety_level_name(u32 level)
@@ -169,28 +164,47 @@ static void rep(char **p, char *end, const char *fmt, ...)
 //   then 7 per-day groups, group n at indices [7+4n .. 7+4n+3]:
 //     [7+4n+0] = 0x0600   ? (constant in the observed config — possibly a bedtime sentinel / format marker)
 //     [7+4n+1] = 0x0100   ? ("this day has a configured limit" flag)
-//     [7+4n+2] = <minutes>  that day's play-time limit, in minutes (0 == fully blocked that day)
+//     [7+4n+2] = <minutes>  that day's play-time limit, in minutes
 //     [7+4n+3] = 0          (reserved; the last group's [+3] is index 34 — absent, the array stops at 34 u16s)
 //   => per-day minutes at indices 9, 13, 17, 21, 25, 29, 33
 // A day whose group is left all-zero (in particular [7+4n+1]==0) is unrestricted (no limit).
-// 0 minutes != no limit: 0 means that day is fully blocked. Group order is Sun..Sat (confirmed
+// 0 minutes != no limit. Actual game blocking must be tested. Group order is Sun..Sat (confirmed
 // by matching a dump against a known configuration). GetPlayTimerRemainingTime (1454) is ns.
 void pctl_play_timer_query(PtState *out)
 {
     memset(out, 0, sizeof(*out));
     for (int n = 0; n < 7; n++) out->day_min[n] = PT_DAY_NOLIMIT;
-    pctl_ops_reinit();
+    out->session_rc = pctl_ops_reinit();
+    if (R_FAILED(out->session_rc)) return;
+    out->session_valid = true;
     Service *srv = pctlGetServiceSession_Service();
 
     bool b = false;
-    if (R_SUCCEEDED(serviceDispatchOut(srv, 1453, b))) out->enabled    = b;   // IsPlayTimerEnabled
+    out->enabled_attempted = true;
+    out->enabled_rc = serviceDispatchOut(srv, 1453, b);
+    if (R_SUCCEEDED(out->enabled_rc)) {
+        out->enabled = b;
+        out->enabled_valid = true;
+    }
     b = false;
-    if (R_SUCCEEDED(serviceDispatchOut(srv, 1455, b))) out->restricted = b;   // IsRestrictedByPlayTimer
+    out->restricted_attempted = true;
+    out->restricted_rc = serviceDispatchOut(srv, 1455, b);
+    if (R_SUCCEEDED(out->restricted_rc)) {
+        out->restricted = b;
+        out->restricted_valid = true;
+    }
     u64 rem = 0;
-    if (R_SUCCEEDED(serviceDispatchOut(srv, 1454, rem))) out->remaining_ns = rem;   // GetPlayTimerRemainingTime (ns)
+    out->remaining_attempted = true;
+    out->remaining_rc = serviceDispatchOut(srv, 1454, rem);
+    if (R_SUCCEEDED(out->remaining_rc)) {
+        out->remaining_ns = rem;
+        out->remaining_valid = true;
+    }
 
     u16 c[34]; memset(c, 0, sizeof(c));
-    if (R_SUCCEEDED(serviceDispatchOut(srv, 145601, c))) {                    // GetPlayTimerSettings
+    out->config_attempted = true;
+    out->config_rc = serviceDispatchOut(srv, 145601, c);
+    if (R_SUCCEEDED(out->config_rc)) {
         out->valid = true;
         for (int n = 0; n < 7; n++)
             out->day_min[n] = c[7 + 4 * n + 1] ? c[7 + 4 * n + 2] : PT_DAY_NOLIMIT;
@@ -199,7 +213,12 @@ void pctl_play_timer_query(PtState *out)
 
 Result pctl_play_timer_set_days(const u16 days_min[7])
 {
-    pctl_ops_reinit();
+#ifdef PCTL_READ_ONLY
+    (void)days_min;
+    return PCTL_READ_ONLY_ERROR;
+#else
+    Result ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) return ir;
 
     bool any = false;
     for (int n = 0; n < 7; n++) if (days_min[n] != PT_DAY_NOLIMIT) any = true;
@@ -213,12 +232,13 @@ Result pctl_play_timer_set_days(const u16 days_min[7])
             if (days_min[n] == PT_DAY_NOLIMIT) continue;   // leave this day's group all-zero == no limit
             c[7 + 4 * n + 0] = 0x0600;             //   ? (constant in the observed config)
             c[7 + 4 * n + 1] = 0x0100;             //   "this day has a limit" flag
-            c[7 + 4 * n + 2] = days_min[n];        //   minutes; 0 == fully blocked that day
+            c[7 + 4 * n + 2] = days_min[n];        //   minutes; 0 is a configured zero limit
             // [7+4n+3] stays 0 (and group 6's would be index 34 — out of bounds)
         }
     }
     // !any: all-zero struct -> the play timer is turned off, IsPlayTimerEnabled becomes false
     return serviceDispatchIn(pctlGetServiceSession_Service(), 195101, c);   // SetPlayTimerSettingsForDebug
+#endif
 }
 
 Result pctl_play_timer_set_uniform(u16 minutes)
@@ -247,7 +267,7 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
 
     rep(&p, e, "=== Play timer config dump (read-only) ===\n");
 
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
+    srv = pctlGetServiceSession_Service();
     { bool b = false; Result r = serviceDispatchOut(srv, 1453, b);
       rep(&p, e, "1453 IsPlayTimerEnabled       : rc=0x%08X  %s\n", (unsigned)r, R_SUCCEEDED(r) ? (b ? "true" : "false") : "-"); }
     { bool b = false; Result r = serviceDispatchOut(srv, 1455, b);
@@ -262,7 +282,9 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
     // GetPlayTimerSettings (145601) — the one we care about. 0x44 bytes, buffer prefilled 0xCC.
     u16  cfg[34];
     bool cfg_ok = false;
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 145601 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
     { u8 b[0x44]; memset(b, 0xCC, 0x44);
       Result r = serviceDispatchOut(srv, 145601, b);
       rep(&p, e, "\n145601 GetPlayTimerSettings: rc=0x%08X   (0x44 bytes; CC == server left it)\n", (unsigned)r);
@@ -278,7 +300,9 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
     }
 
     // GetPlayTimerRemainingTimeDisplayInfo (1459, fw 20+) — 0x20 bytes on fw 22.1.0.
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1459 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
     { u8 b[0x20]; memset(b, 0xCC, sizeof(b));
       Result r = serviceDispatchOut(srv, 1459, b);
       rep(&p, e, "\n1459 GetPlayTimerRemainingTimeDisplayInfo: rc=0x%08X  (0x20 bytes; CC == server left it)\n", (unsigned)r);
@@ -286,26 +310,31 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
           for (int i = 0; i < 0x20; i++) { rep(&p, e, "%02X ", b[i]); if ((i & 15) == 15) rep(&p, e, "\n"); }
       rep(&p, e, "\n"); }
 
-    // Restriction state + PIN — for the temporary-unlock path: UnlockRestrictionTemporarily
-    // (cmd 1201) takes the PIN as an input pointer buffer, which we read via GetPinCode
-    // (cmd 1208, an Out|HipcPointer buffer). All read-only. 1031/1006 show whether there's
-    // even a content restriction to unlock and whether it's already temporarily unlocked.
-    // The PIN digits are masked ('##' for any ASCII '0'..'9' byte) — only layout/length shows.
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
+    // Restriction state and whether a PIN is configured. Do not read PIN content
+    // in diagnostics, even if a report would mask it before writing to disk.
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1031 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
     { bool b = false; Result r = serviceDispatchOut(srv, 1031, b);
       rep(&p, e, "\n1031 IsRestrictionEnabled         : rc=0x%08X  %s\n", (unsigned)r, R_SUCCEEDED(r) ? (b ? "true" : "false") : "-"); }
     { bool b = false; Result r = serviceDispatchOut(srv, 1006, b);
       rep(&p, e, "1006 IsRestrictionTemporaryUnlocked: rc=0x%08X  %s\n", (unsigned)r, R_SUCCEEDED(r) ? (b ? "true" : "false") : "-"); }
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1206 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
     { u32 len = 0; Result r = serviceDispatchOut(srv, 1206, len);
       rep(&p, e, "1206 GetPinCodeLength             : rc=0x%08X  len=%u\n", (unsigned)r, (unsigned)len); }
-    pctl_ops_reinit(); srv = pctlGetServiceSession_Service();
-    { u8 b[0x10]; memset(b, 0xCC, sizeof(b)); u32 ret = 0;
-      Result r = serviceDispatchOut(srv, 1208, ret,
+
+    // Probe the original GetPinCode command for compatibility. Do not include
+    // its output buffer, byte pattern, or returned PIN length in the report.
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1208 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
+    { char pin[32] = {0}; u32 pin_length = 0;
+      Result r = serviceDispatchOut(srv, 1208, pin_length,
           .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_Out },
-          .buffers      = { { b, sizeof(b) } });
-      rep(&p, e, "1208 GetPinCode                   : rc=0x%08X  ret=%u   (0x10-byte buf; CC == untouched, ## == ASCII digit)\n ", (unsigned)r, (unsigned)ret);
-      for (size_t i = 0; i < sizeof(b); i++) rep(&p, e, (b[i] >= '0' && b[i] <= '9') ? "## " : "%02X ", b[i]);
-      rep(&p, e, "\n"); }
+          .buffers = { { pin, sizeof(pin) } });
+      memset(pin, 0, sizeof(pin));
+      rep(&p, e, "1208 GetPinCode                   : rc=0x%08X  content=not recorded\n", (unsigned)r); }
 }
 

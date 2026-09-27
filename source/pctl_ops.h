@@ -38,13 +38,8 @@ Result pctl_set_pin(void);                   // opens the OS PIN screen (registe
 Result pctl_delete_parental_controls(void);  // wipes the PIN and every restriction — CANNOT BE UNDONE
 Result pctl_delete_pairing(void);            // unlinks the companion mobile app from this console
 
-// UnlockRestrictionTemporarily (cmd 1201): temporarily lifts the parental-control
-// restriction (and, on fw 22.1.0, makes IsPlayTimerEnabled read false). Reads the
-// current PIN via GetPinCode (cmd 1208) and passes it back — works even if the user
-// has forgotten it, since under CFW we hold a privileged pctl session. The PIN goes
-// in a HIPC *pointer* buffer, NUL-terminated. (Implementation note / pitfalls live in
-// pctl_ops.c.) Verified working on fw 22.1.0; used by the play-timer "unlock before
-// rewriting the limit" flow.
+// Deprecated entry point. Always returns an error; a parent must use the system
+// PIN interface to temporarily unlock restrictions.
 Result pctl_unlock_restriction_temporarily(void);
 
 const char *pctl_safety_level_name(u32 level);
@@ -52,32 +47,45 @@ const char *pctl_safety_level_name(u32 level);
 // ---- play timer ----
 // Writes a multi-line read-only diagnostic report into buf: 1453/1455/1458/1454, the
 // raw 0x44-byte GetPlayTimerSettings (145601) + its u16[34]/decoded view, 1459
-// GetPlayTimerRemainingTimeDisplayInfo, and — for the temporary-unlock path — 1031
-// IsRestrictionEnabled, 1006 IsRestrictionTemporaryUnlocked, 1206 GetPinCodeLength,
-// 1208 GetPinCode (PIN digits shown masked). Touches nothing — safe to run.
+// GetPlayTimerRemainingTimeDisplayInfo, 1031 IsRestrictionEnabled, 1006
+// IsRestrictionTemporaryUnlocked, 1206 GetPinCodeLength, and 1208 GetPinCode.
+// The 1208 read is only a compatibility probe; PIN content is never reported.
 void pctl_play_timer_dump(char *buf, size_t bufsz);
 
 // Writes 0x44 bytes of zeros via SetPlayTimerSettingsForDebug — clears any
-// play-time limit (also reachable as pctl_play_timer_set_uniform(0)).
+// play-time limit. pctl_play_timer_set_uniform(0) configures a 0-minute limit.
 Result pctl_play_timer_clear(void);
 
 // Per-day value sentinel: this day has no configured limit at all (unrestricted).
-// (0 means a *0-minute* limit — i.e. that day is fully blocked. They are different.)
+// (0 means a configured 0-minute limit. Actual game behavior must be tested.)
 #define PT_DAY_NOLIMIT 0xFFFFu
 
 // Snapshot of the play-timer state.
 typedef struct {
+    bool session_valid;  // reinitialization succeeded; session_rc is always set
+    Result session_rc;
     bool valid;          // GetPlayTimerSettings (145601) succeeded
-    bool enabled;        // IsPlayTimerEnabled (1453)
-    bool restricted;     // IsRestrictedByPlayTimer (1455) — true == today's limit reached
-    u64  remaining_ns;   // GetPlayTimerRemainingTime (1454), ns; often 0 with no game running (a non-zero value has been seen on a console with a configured limit)
-    u16  day_min[7];     // per-day, Sun..Sat: minutes (0 == no play that day), or PT_DAY_NOLIMIT == no limit
+    bool config_attempted;
+    Result config_rc;    // meaningful only when config_attempted
+    bool enabled_attempted;
+    bool enabled_valid;
+    Result enabled_rc;   // meaningful only when enabled_attempted
+    bool enabled;        // IsPlayTimerEnabled (1453); meaningful only when enabled_valid
+    bool restricted_attempted;
+    bool restricted_valid;
+    Result restricted_rc; // meaningful only when restricted_attempted
+    bool restricted;     // IsRestrictedByPlayTimer (1455); meaningful only when restricted_valid
+    bool remaining_attempted;
+    bool remaining_valid;
+    Result remaining_rc; // meaningful only when remaining_attempted
+    u64  remaining_ns;   // GetPlayTimerRemainingTime (1454), ns; meaningful only when remaining_valid
+    u16  day_min[7];     // per-day, Sun..Sat; meaningful only when valid
 } PtState;
 
 void pctl_play_timer_query(PtState *out);
 
 // Sets per-day play-time limits (days_min[0]=Sunday .. [6]=Saturday): each is minutes
-// (0 == that day is fully blocked), or PT_DAY_NOLIMIT to leave that day unrestricted.
+// (0 == a configured 0-minute limit), or PT_DAY_NOLIMIT to leave that day unrestricted.
 // If every day is PT_DAY_NOLIMIT the play timer is turned off entirely.
 Result pctl_play_timer_set_days(const u16 days_min[7]);
 

@@ -20,7 +20,7 @@ constexpr const char* DAY_NAMES[7] = {
 std::string fmt_minutes(u16 m)
 {
     if (m == PT_DAY_NOLIMIT) return "no limit";
-    if (m == 0)              return "no play";
+    if (m == 0)              return "0 min configured";
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%u min", (unsigned)m);
     return buf;
@@ -29,6 +29,16 @@ std::string fmt_minutes(u16 m)
 
 void PlayTimerPerDayActivity::onContentAvailable()
 {
+#ifdef PCTL_READ_ONLY
+    this->pt_d0->setVisibility(brls::Visibility::GONE);
+    this->pt_d1->setVisibility(brls::Visibility::GONE);
+    this->pt_d2->setVisibility(brls::Visibility::GONE);
+    this->pt_d3->setVisibility(brls::Visibility::GONE);
+    this->pt_d4->setVisibility(brls::Visibility::GONE);
+    this->pt_d5->setVisibility(brls::Visibility::GONE);
+    this->pt_d6->setVisibility(brls::Visibility::GONE);
+    this->pt_save->setVisibility(brls::Visibility::GONE);
+#else
     // Hand each day cell to a numpad-stage lambda. Capturing the index directly
     // keeps things readable (vs. one shared lambda taking the cell ptr).
     auto wire_day = [this](brls::DetailCell* cell, int d) {
@@ -49,6 +59,7 @@ void PlayTimerPerDayActivity::onContentAvailable()
         this->do_save();
         return true;
     });
+#endif
 
     this->reload_from_service();
     this->state_header->refresh();
@@ -67,7 +78,8 @@ void PlayTimerPerDayActivity::onResume()
 void PlayTimerPerDayActivity::reload_from_service()
 {
     pctl_play_timer_query(&this->live);
-    for (int i = 0; i < 7; i++) this->pending[i] = this->live.day_min[i];
+    if (this->live.valid)
+        for (int i = 0; i < 7; i++) this->pending[i] = this->live.day_min[i];
 }
 
 void PlayTimerPerDayActivity::rerender_day_labels()
@@ -77,6 +89,10 @@ void PlayTimerPerDayActivity::rerender_day_labels()
         this->pt_d4, this->pt_d5, this->pt_d6,
     };
     for (int d = 0; d < 7; d++) {
+        if (!this->live.valid) {
+            cells[d]->setDetailText("(unavailable)");
+            continue;
+        }
         std::string text = fmt_minutes(this->pending[d]);
         if (this->pending[d] != this->live.day_min[d])
             text += "  (*)";
@@ -86,12 +102,16 @@ void PlayTimerPerDayActivity::rerender_day_labels()
 
 void PlayTimerPerDayActivity::open_numpad_for(int d)
 {
+    if (!this->live.valid) {
+        brls::Application::notify("Play timer configuration is unavailable.");
+        return;
+    }
     // Seed numpad: use current pending value, or 60 when "no limit" (the user
     // is presumably trying to put a value on this day, so no-limit isn't a
     // useful starting point).
     u16 seed = (this->pending[d] == PT_DAY_NOLIMIT) ? 60 : this->pending[d];
     auto v = numpad::prompt_minutes(
-        fmt::format("{} limit  (0 = no play that day)", DAY_NAMES[d]),
+        fmt::format("{} limit  (0 = zero minutes)", DAY_NAMES[d]),
         seed);
     if (!v.has_value()) return;   // cancelled
     this->pending[d] = *v;
@@ -100,6 +120,10 @@ void PlayTimerPerDayActivity::open_numpad_for(int d)
 
 void PlayTimerPerDayActivity::do_save()
 {
+    if (!this->live.valid) {
+        brls::Application::notify("Play timer configuration is unavailable; nothing was written.");
+        return;
+    }
     bool changed = false;
     for (int i = 0; i < 7; i++)
         if (this->pending[i] != this->live.day_min[i]) { changed = true; break; }

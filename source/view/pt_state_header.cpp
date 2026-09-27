@@ -10,6 +10,7 @@ namespace
 {
 std::string fmt_remaining(const PtState& pt)
 {
+    if (!pt.enabled_valid || !pt.remaining_valid) return "(unavailable)";
     if (!pt.enabled)        return "unknown";   // no active timer to report against
     if (pt.remaining_ns) {
         char buf[32];
@@ -30,7 +31,7 @@ std::string fmt_configured(const PtState& pt)
         if (pt.day_min[i] != pt.day_min[0])   uniform = false;
     }
     if (!any)                            return "not set (timer off)";
-    if (uniform && pt.day_min[0] == 0)   return "every day blocked";
+    if (uniform && pt.day_min[0] == 0)   return "0 min/day configured; game behavior unverified";
     if (uniform) {
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%u min (all days)", (unsigned)pt.day_min[0]);
@@ -60,9 +61,11 @@ void PtStateHeader::refresh()
     PtState pt;
     pctl_play_timer_query(&pt);
 
-    this->enabled_value->setText(pt.enabled ? "yes" : "no");
+    this->enabled_value->setText(pt.enabled_valid ? (pt.enabled ? "yes" : "no") : "(unavailable)");
     this->restricted_value->setText(
-        pt.restricted ? "yes ('time's up' screen may be active)" : "no");
+        pt.restricted_valid
+            ? (pt.restricted ? "yes (game behavior unverified)" : "no")
+            : "(unavailable)");
     this->remaining_value->setText(fmt_remaining(pt));
     this->configured_value->setText(fmt_configured(pt));
 }

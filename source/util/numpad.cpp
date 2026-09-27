@@ -19,7 +19,7 @@ std::optional<uint16_t> prompt_minutes(const std::string& header, uint16_t curre
     swkbdConfigSetStringLenMin(&kbd, 1);
     swkbdConfigSetStringLenMax(&kbd, 4);
     swkbdConfigSetHeaderText(&kbd, header.c_str());
-    swkbdConfigSetGuideText(&kbd, "minutes per day  (0 = no play that day; max 1440)");
+    swkbdConfigSetGuideText(&kbd, "minutes per day  (0 = zero minutes; max 1440)");
 
     char initial[8];
     std::snprintf(initial, sizeof(initial), "%u", (unsigned)current);
