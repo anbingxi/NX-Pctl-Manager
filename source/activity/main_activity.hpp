@@ -20,6 +20,7 @@ class MainActivity : public brls::Activity
     BRLS_BIND(StatusPanel,       status_panel,    "status_panel");
     BRLS_BIND(brls::DetailCell,  item_refresh,    "item_refresh");
     BRLS_BIND(brls::DetailCell,  item_play_timer, "item_play_timer");
+    BRLS_BIND(brls::DetailCell,  item_time_sync,  "item_time_sync");
     BRLS_BIND(brls::DetailCell,  item_set_pin,    "item_set_pin");
     BRLS_BIND(brls::DetailCell,  item_delete_pc,  "item_delete_pc");
     BRLS_BIND(brls::DetailCell,  item_unlink,     "item_unlink");

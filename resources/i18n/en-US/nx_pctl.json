@@ -40,7 +40,7 @@
             "set_all":  "Set daily limit (all days)…",
             "per_day":  "Per-day limits…",
             "remove":   "Remove play-time limit",
-            "diag":     "Dump current config → sd:/nx_pctl_probe.txt"
+            "diag":     "Dump clocks and config → sd:/switch/nx_pctl_manager/logs/"
         },
 
         "dialog": {

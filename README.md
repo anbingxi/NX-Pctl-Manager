@@ -70,6 +70,35 @@ Build with `make PROBE=1 READ_ONLY=0 dist` for the complete manager menu plus *D
 
 Build success and session-release tests do not establish that all-game blocking or sleep/wake restoration works on real hardware. `IsRestrictedByPlayTimer=false` remains the system's result until the underlying enforcement behavior is identified.
 
+### Third-party time synchronization and timer checks
+
+Open **时间同步与限时检查** from the main menu. Select a preset or enter an NTP hostname/IP, choose **读取服务器时间**, then **应用时间并检查限时**. Presets include:
+
+| Provider | Host |
+| --- | --- |
+| Alibaba Cloud | `ntp.aliyun.com` |
+| Tencent Cloud | `ntp1.tencent.com` |
+| Cloudflare | `time.cloudflare.com` |
+| Google | `time.google.com` |
+| NTP Pool China | `cn.pool.ntp.org` |
+| NTP Pool Asia | `asia.pool.ntp.org` |
+| NTP Pool global | `pool.ntp.org` |
+
+This action sends a user-initiated NTP query over UDP 123 to the selected provider and writes the returned UTC time to the system network clock using a temporary `time:s` session. Enable **Synchronize Clock via Internet** in System Settings first; the tool checks that choice and uses the selected NTP server for its own request. It does not install a replacement for the system's background synchronization. If Nintendo's servers are blocked, an accessible third-party NTP server can still supply this sample. Network reachability is checked by the request itself.
+
+The page shows user/network clocks, the actual system automatic-correction and network-clock-accuracy results, and the actual pctl enabled/restricted/temporary-unlock results. A successful clock write, readback, or accuracy check does not establish that games are blocked. Before writing, the tool must successfully save the original clock and pctl report; afterwards it automatically saves the combined comparison under `/switch/nx_pctl_manager/logs/`. Each clock and pctl operation releases its service handles. Failed or unavailable reads remain distinct from false.
+
+Time samples expire after 120 seconds. Requests validate the NTP response mode, version, leap status, stratum, request cookie and transmit timestamp; malformed responses are never applied. The screen shows UTC explicitly and leaves the console's timezone selection in place.
+
+For hardware testing on 22.5:
+
+1. Keep the zero-minute configuration and parental-control state unchanged for the time comparison. Apply a valid NTP sample and record whether **网络时钟精度足够** and **当前受到时间限制** change.
+2. Exit the manager with B. Test playable content in a low-age-rating game; then test a previously suspended game after sleep/wake. Reopen the time page and export another report for each failed observation.
+3. Restart into the same system environment and reopen the page to check whether the corrected clock and restriction behavior persist. Persistence and the all-game lock remain unverified until this physical-console test is completed.
+4. If time is written and accuracy is sufficient but restrictions remain false, time synchronization alone has not resolved the fault. Keep the saved before/after report for the next investigation.
+
+Reference implementations: [SwitchTime](https://github.com/3096/switch-time/blob/master/source/main.c), [libnx clock IPC](https://github.com/switchbrew/libnx/blob/master/nx/source/services/time.c). Provider references: [Alibaba Cloud](https://help.aliyun.com/zh/eci/user-guide/configure-the-ntp-service), [Tencent Cloud](https://intl.cloud.tencent.com/zh/document/product/213/32379), [Cloudflare](https://developers.cloudflare.com/time-services/ntp/usage/), [Google](https://developers.google.com/time), [NTP Pool](https://www.ntppool.org/en/zone/asia).
+
 ### Other actions
 
 - *Set / change parental control PIN* switches to the system applet to set a passcode and returns automatically when done.

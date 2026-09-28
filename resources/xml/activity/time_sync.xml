@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<brls:AppletFrame title="时间同步与限时检查" iconInterpolation="linear">
+    <brls:ScrollingFrame width="auto" height="auto" axis="column" alignItems="stretch" scrollingBehavior="centered" grow="1.0">
+        <brls:Box width="auto" height="auto" axis="column" alignItems="stretch"
+            paddingTop="@style/brls/sidebar/padding_top" paddingRight="@style/brls/sidebar/padding_right"
+            paddingBottom="@style/brls/sidebar/padding_bottom" paddingLeft="@style/brls/sidebar/padding_left">
+            <brls:Label id="time_clocks" width="auto" height="auto" text="正在读取系统时钟……" marginBottom="16"/>
+            <brls:Label id="time_timer" width="auto" height="auto" text="正在读取限时状态……" marginBottom="16"/>
+            <brls:Label id="time_result" width="auto" height="auto" text="" marginBottom="16"/>
+            <brls:DetailCell id="time_server" title="NTP 服务器"/>
+            <brls:DetailCell id="time_aliyun" title="使用阿里云 ntp.aliyun.com"/>
+            <brls:DetailCell id="time_tencent" title="使用腾讯云 ntp1.tencent.com"/>
+            <brls:DetailCell id="time_cloudflare" title="使用 Cloudflare time.cloudflare.com"/>
+            <brls:DetailCell id="time_google" title="使用 Google time.google.com"/>
+            <brls:DetailCell id="time_pool_cn" title="使用 NTP Pool 中国 cn.pool.ntp.org"/>
+            <brls:DetailCell id="time_pool_asia" title="使用 NTP Pool 亚洲 asia.pool.ntp.org"/>
+            <brls:DetailCell id="time_pool_global" title="使用 NTP Pool 全球 pool.ntp.org"/>
+            <brls:DetailCell id="time_fetch" title="读取服务器时间"/>
+            <brls:DetailCell id="time_apply" title="应用时间并检查限时"/>
+            <brls:DetailCell id="time_refresh" title="重新读取时钟与限时状态"/>
+            <brls:DetailCell id="time_dump" title="导出时钟与限时日志"/>
+        </brls:Box>
+    </brls:ScrollingFrame>
+</brls:AppletFrame>

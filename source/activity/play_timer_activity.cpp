@@ -1,68 +1,19 @@
 // Copyright (C) 2026 Taylor.  GPLv3-or-later (see LICENSE).
 #include "activity/play_timer_activity.hpp"
 
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
-#include <ctime>
 #include <string>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <fmt/format.h>
 
 #include "action/pt_flow.hpp"
 #include "activity/play_timer_perday_activity.hpp"
 #include "util/numpad.hpp"
+#include "util/diagnostics.hpp"
 #include "util/pctl_ops_c.hpp"
 
 using namespace brls::literals;
 
 namespace
 {
-#ifdef PCTL_PROBE
-std::string save_diagnostic(const char* report)
-{
-    const char* base = "/switch/nx_pctl_manager";
-    const std::string dir = std::string(base) + "/logs";
-    if (mkdir(base, 0777) != 0 && errno != EEXIST)
-        return fmt::format("Could not create diagnostic directory (error {}).", errno);
-    if (mkdir(dir.c_str(), 0777) != 0 && errno != EEXIST)
-        return fmt::format("Could not create diagnostic directory (error {}).", errno);
-
-    std::time_t now = std::time(nullptr);
-    std::tm* clock = std::localtime(&now);
-    char stamp[32];
-    if (!clock || !std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", clock))
-        return "Could not read the clock for the diagnostic filename.";
-
-    for (unsigned index = 1; index <= 9999; ++index) {
-        std::string path = fmt::format("{}/{}_{}_{:04}.txt", dir, stamp,
-            (unsigned long long)svcGetSystemTick(), index);
-        if (access(path.c_str(), F_OK) == 0) continue;
-        std::string pending = path + ".tmp";
-        if (access(pending.c_str(), F_OK) == 0) continue;
-        FILE* file = std::fopen(pending.c_str(), "wb");
-        if (!file) return fmt::format("Could not open diagnostic file (error {}).", errno);
-        size_t length = std::strlen(report);
-        bool ok = std::fwrite(report, 1, length, file) == length;
-        int write_error = ok ? 0 : errno;
-        if (ok && std::fflush(file) != 0) { ok = false; write_error = errno; }
-        if (std::fclose(file) != 0) { ok = false; write_error = errno; }
-        if (!ok) {
-            std::remove(pending.c_str());
-            return fmt::format("Could not finish diagnostic file (error {}).", write_error);
-        }
-        if (std::rename(pending.c_str(), path.c_str()) != 0) {
-            int rename_error = errno;
-            std::remove(pending.c_str());
-            return fmt::format("Could not rename diagnostic file (error {}).", rename_error);
-        }
-        return fmt::format("Diagnostic saved: {}", path);
-    }
-    return "Could not find a free diagnostic filename.";
-}
-#endif
-
 // If the seven days share one value, return that minute count; otherwise return
 // 60 as a sensible default for the numpad to land on. PT_DAY_NOLIMIT counts as
 // "no useful starting value" → fall back to 60.
@@ -135,13 +86,7 @@ void PlayTimerActivity::onContentAvailable()
     // The compatibility probe never stores PIN contents in the report.
     this->pt_diag->setVisibility(brls::Visibility::VISIBLE);
     this->pt_diag->registerClickAction([](brls::View*) {
-        static char buf[16384];
-        pctl_play_timer_dump(buf, sizeof(buf));
-        if (std::strlen(buf) >= sizeof(buf) - 1) {
-            brls::Application::notify("Diagnostic report exceeded its buffer.");
-            return true;
-        }
-        brls::Application::notify(save_diagnostic(buf));
+        brls::Application::notify(diagnostic::save(diagnostic::current_report()));
         return true;
     });
 #endif

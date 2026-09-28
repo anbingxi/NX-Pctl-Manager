@@ -21,6 +21,15 @@ jobs:
           /tmp/pctl_session_test
           gcc -std=c11 -Wall -Wextra -Werror -DPCTL_READ_ONLY=1 -Itests/pctl_session -Isource source/pctl_ops.c tests/pctl_session/test.c -o /tmp/pctl_readonly_test
           /tmp/pctl_readonly_test
+      - name: Check NTP replies and clock service operations
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -Isource/util source/util/ntp_packet.c tests/ntp_packet/test.c -o /tmp/ntp_packet_test
+          /tmp/ntp_packet_test
+          g++ -std=c++17 -Wall -Wextra -Werror -Isource/util -c source/util/ntp_client.cpp -o /tmp/ntp_client.o
+          gcc -std=c11 -Wall -Wextra -Werror -Itests/time_ops -Isource source/time_ops.c tests/time_ops/test.c -o /tmp/time_ops_test
+          /tmp/time_ops_test
+          gcc -std=c11 -Wall -Wextra -Werror -DPCTL_READ_ONLY=1 -Itests/time_ops -Isource source/time_ops.c tests/time_ops/test.c -o /tmp/time_readonly_test
+          /tmp/time_readonly_test
       - name: Build full manager with probe
         run: docker run --rm -v "$PWD:/project" -w /project devkitpro/devkita64 make PROBE=1 READ_ONLY=0 dist
       - name: Record build identity

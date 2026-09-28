@@ -4,6 +4,7 @@
 #include <fmt/format.h>
 
 #include "activity/play_timer_activity.hpp"
+#include "activity/time_sync_activity.hpp"
 #include "app.hpp"
 #include "util/pctl_ops_c.hpp"
 
@@ -38,6 +39,10 @@ void run_destructive(const std::string& body, const std::string& confirm_label,
 
 void MainActivity::onContentAvailable()
 {
+    this->item_time_sync->registerClickAction([](brls::View*) {
+        brls::Application::pushActivity(new TimeSyncActivity());
+        return true;
+    });
     // Refresh status — step (c): re-read pctl state and update the panel.
     // The status panel already refreshes on onResume; this lets the user force
     // a re-read without leaving the screen.
