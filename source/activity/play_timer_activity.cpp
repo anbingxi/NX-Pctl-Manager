@@ -132,7 +132,7 @@ void PlayTimerActivity::onContentAvailable()
 
 #ifdef PCTL_PROBE
     // PROBE build: export a report under /switch/nx_pctl_manager/logs/.
-    // The report never reads or stores PIN contents.
+    // The compatibility probe never stores PIN contents in the report.
     this->pt_diag->setVisibility(brls::Visibility::VISIBLE);
     this->pt_diag->registerClickAction([](brls::View*) {
         static char buf[16384];
@@ -147,12 +147,13 @@ void PlayTimerActivity::onContentAvailable()
 #endif
 
 #ifndef PCTL_READ_ONLY
-    // Remove play-time limit. This remains a separate confirmation path;
-    // do not use it while the system displays the time limit screen.
+    // Remove play-time limit after confirmation and the shared state check.
     this->pt_remove->registerClickAction([this](brls::View*) {
         auto* dialog = new brls::Dialog("nx_pctl/play_timer/dialog/remove/body"_i18n);
         dialog->addButton("hints/cancel"_i18n, [] {});
         dialog->addButton("nx_pctl/play_timer/dialog/remove/confirm"_i18n, [this]() {
+          pt_flow::ready_to_write([this](bool ok, bool) {
+            if (!ok) return;
             Result rc = pctl_play_timer_clear();
             this->state_header->refresh();
             if (R_SUCCEEDED(rc))
@@ -161,6 +162,7 @@ void PlayTimerActivity::onContentAvailable()
                 brls::Application::notify(fmt::format(
                     "Could not turn off the play timer (error 0x{:08X}).",
                     (unsigned)rc));
+          });
         });
         dialog->open();
         return true;

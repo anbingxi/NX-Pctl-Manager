@@ -67,6 +67,8 @@ void PtStateHeader::refresh()
             ? (pt.restricted ? "yes (game behavior unverified)" : "no")
             : "(unavailable)");
     this->remaining_value->setText(fmt_remaining(pt));
+    this->temporary_value->setText(pt.temporary_unlocked_valid
+        ? (pt.temporary_unlocked ? "yes" : "no") : "(unavailable)");
     this->configured_value->setText(fmt_configured(pt));
 }
 

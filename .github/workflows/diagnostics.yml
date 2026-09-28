@@ -1,4 +1,4 @@
-name: diagnostic build
+name: manager build with diagnostics
 
 on:
   push:
@@ -15,18 +15,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Build read-only probe
-        run: docker run --rm -v "$PWD:/project" -w /project devkitpro/devkita64 make PROBE=1 READ_ONLY=1 dist
+      - name: Check service lifetime and write guards
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -Itests/pctl_session -Isource source/pctl_ops.c tests/pctl_session/test.c -o /tmp/pctl_session_test
+          /tmp/pctl_session_test
+          gcc -std=c11 -Wall -Wextra -Werror -DPCTL_READ_ONLY=1 -Itests/pctl_session -Isource source/pctl_ops.c tests/pctl_session/test.c -o /tmp/pctl_readonly_test
+          /tmp/pctl_readonly_test
+      - name: Build full manager with probe
+        run: docker run --rm -v "$PWD:/project" -w /project devkitpro/devkita64 make PROBE=1 READ_ONLY=0 dist
       - name: Record build identity
         run: |
           git rev-parse HEAD > build-info.txt
           git submodule status --recursive >> build-info.txt
-          printf 'PROBE=1 READ_ONLY=1\n' >> build-info.txt
+          printf 'PROBE=1 READ_ONLY=0\n' >> build-info.txt
           sha256sum nx_pctl_manager.nro nx_pctl_manager.zip > SHA256SUMS.txt
       - name: Upload diagnostic files
         uses: actions/upload-artifact@v4
         with:
-          name: nx_pctl_diagnostics
+          name: nx_pctl_manager_with_diagnostics
           path: |
             nx_pctl_manager.nro
             nx_pctl_manager.zip

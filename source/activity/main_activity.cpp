@@ -85,8 +85,8 @@ void MainActivity::onContentAvailable()
 
 #ifndef PCTL_READ_ONLY
     // Set / change PIN — step (f). pctl_set_pin() pops the pctlauth applet
-    // (it's already wrapped in pctlExit/pctlauthRegisterPasscode/pctlInitialize
-    // inside pctl_ops.c — that bracket is required on some firmware versions).
+    // pctl_ops.c releases our session before opening the applet. It acquires
+    // another session only when the next service operation needs it.
     // Synchronous: blocks until the applet returns.
     //
     // The notify() is deferred to the next mainLoop tick via brls::sync —

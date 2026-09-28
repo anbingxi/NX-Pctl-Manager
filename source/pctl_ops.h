@@ -28,9 +28,11 @@ typedef struct {
     bool restriction_enabled;
 } PctlStatus;
 
-Result pctl_ops_init(void);   // open the `pctl` service (needs CFW for the privileged calls)
-void   pctl_ops_exit(void);
-Result pctl_ops_reinit(void); // close + reopen the session (recovers if a bad command closed it)
+// These wrappers own at most one libnx reference. Operations below acquire and
+// release their session; callers must not keep an idle privileged session open.
+Result pctl_ops_init(void);   // idempotent acquisition; marks ownership only on success
+void   pctl_ops_exit(void);  // releases only this layer's owned reference
+Result pctl_ops_reinit(void); // release the owned reference, then acquire once
 
 void pctl_status_fetch(PctlStatus *out);
 
@@ -48,7 +50,8 @@ const char *pctl_safety_level_name(u32 level);
 // Writes a multi-line read-only diagnostic report into buf: 1453/1455/1458/1454, the
 // raw 0x44-byte GetPlayTimerSettings (145601) + its u16[34]/decoded view, 1459
 // GetPlayTimerRemainingTimeDisplayInfo, 1031 IsRestrictionEnabled, 1006
-// IsRestrictionTemporaryUnlocked, 1206 GetPinCodeLength, and 1208 GetPinCode.
+// IsRestrictionTemporaryUnlocked, 1206 GetPinCodeLength, 1208 GetPinCode,
+// and the raw 1952 GetPlayTimerSpentTimeForTest result.
 // The 1208 read is only a compatibility probe; PIN content is never reported.
 void pctl_play_timer_dump(char *buf, size_t bufsz);
 
@@ -75,6 +78,9 @@ typedef struct {
     bool restricted_valid;
     Result restricted_rc; // meaningful only when restricted_attempted
     bool restricted;     // IsRestrictedByPlayTimer (1455); meaningful only when restricted_valid
+    bool temporary_unlocked_valid;
+    Result temporary_unlocked_rc;
+    bool temporary_unlocked; // 1006; meaningful only when temporary_unlocked_valid
     bool remaining_attempted;
     bool remaining_valid;
     Result remaining_rc; // meaningful only when remaining_attempted
@@ -89,6 +95,6 @@ void pctl_play_timer_query(PtState *out);
 // If every day is PT_DAY_NOLIMIT the play timer is turned off entirely.
 Result pctl_play_timer_set_days(const u16 days_min[7]);
 
-// Convenience: the same minute limit on every day (minutes == 0 blocks every day —
-// to turn the timer OFF instead, use pctl_play_timer_clear).
+// Convenience: the same minute limit on every day. Zero configures zero minutes;
+// actual game blocking must be verified. To turn it off use pctl_play_timer_clear.
 Result pctl_play_timer_set_uniform(u16 minutes);

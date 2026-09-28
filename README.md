@@ -22,9 +22,9 @@ Nintendo **only lets you set the daily play-time limit through the "Nintendo Swi
 - **Set each day separately** — Sunday, Monday … Saturday each get their own value (edited day-by-day in a sub-menu, staged, then saved all at once).
 - **Turn the limit off** — remove the play timer entirely.
 
-Notes: `0` minutes means that day is **fully blocked** (not "no limit"); for "no limit", use *Remove play-time limit* to turn the whole timer off. Once set, the play timer takes effect when you launch a game (verified on fw 22.1.0 / Atmosphère 1.11.1).
+`0` configures a zero-minute limit. On firmware 22.5 / Atmosphère 1.11.2, the reported configuration has not yet been shown to block games. Use *Remove play-time limit* to clear the configuration.
 
-> If the play timer is **currently active** (already counting down), overwriting its config directly destabilises Atmosphère — so the tool first turns parental controls off temporarily (it reads and uses the console's PIN automatically — **you don't need to remember it**), writes the new value, and you return to the main menu; the new limit takes effect once parental controls are active again.
+If the timer is enabled or reports a restriction, first enter the parent's PIN in the system parental-control screen to temporarily unlock it. The manager checks command 1006 before allowing the write. Unknown status blocks timer changes. Each operation releases its pctl session before returning to the UI, including failed operations.
 
 ### Other (parental-controls recovery / maintenance)
 
@@ -35,7 +35,7 @@ Notes: `0` minutes means that day is **fully blocked** (not "no limit"); for "no
 
 ## How to use
 
-Controls: ↑ / ↓ move the cursor, (A) confirms, (B) goes back one level / (on the main menu) exits. Destructive actions (delete all parental controls, unlink companion app, remove the limit) and "turn parental controls off temporarily" all show a confirmation screen first.
+Controls: ↑ / ↓ move the cursor, (A) confirms, (B) goes back one level / (on the main menu) exits. Delete all parental controls, unlink companion app, and remove the limit show a confirmation screen first.
 
 ### Pick the flow that matches your console
 
@@ -56,7 +56,19 @@ Main menu → *Play timer (daily limit)*:
 - *Set daily limit (all days)*: pops a number pad for the minutes (0–1440), applies it to every day, writes it after you confirm.
 - *Per-day limits*: opens a sub-menu; press (A) on a day to type its value (it's **staged** — edited days are marked `(*)`); when you're done, pick *Save per-day limits* to write all 7 at once; press (B) to leave without saving.
 - *Remove play-time limit*: turns the whole timer off (with confirmation).
-- When writing, if the timer is active you'll first get a confirmation → (once you agree) parental controls are turned off temporarily → the new value is written → you're told to return to the main menu (the new limit takes effect once parental controls are active again). ⚠️ **Don't set the limit below "time already played today"** — the moment parental controls come back on, it locks immediately.
+- If the timer is enabled or restricted, use the system PIN screen for temporary unlock, then return to write. The manager checks status again immediately before sending the write.
+
+### Test the session-release build on 22.5
+
+Build with `make PROBE=1 READ_ONLY=0 dist` for the complete manager menu plus *Dump current config*. `READ_ONLY=1` builds the reduced diagnostic interface.
+
+1. Replace the old `/switch/nx_pctl_manager.nro` with the new artifact. Verify the main menu contains PIN, daily limit, delete, and unlink actions; verify the daily-limit page contains uniform, per-day, remove, and dump actions.
+2. With parental controls enabled, refresh and export one dump. The report records the actual enabled, restricted, and temporary-unlock results and confirms the tool released its session before returning. Exit with B from the main menu.
+3. Use the HOME parental-control icon and enter the parent's PIN. Check whether the crash recurs. If it does, preserve the new Atmosphère reports and stop that test.
+4. If HOME unlock works, reopen the manager. Temporary unlock should read `yes`. Export another dump; timer changes should pass the status gate. A failed query must show unavailable and block timer changes.
+5. For game-lock acceptance, configure zero minutes for every day, restore restrictions, and test both a low-age-rating game and a previously suspended game after sleep/wake. Actual playable content is a failure even when remaining time is zero. Export a dump at each changed parental-control state or failed game-lock observation; routine navigation does not need a dump.
+
+Build success and session-release tests do not establish that all-game blocking or sleep/wake restoration works on real hardware. `IsRestrictedByPlayTimer=false` remains the system's result until the underlying enforcement behavior is identified.
 
 ### Other actions
 

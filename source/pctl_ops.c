@@ -48,20 +48,34 @@
  * pctl_ops_init() itself fails and the app never gets this far.
  */
 
-Result pctl_ops_init(void) { return pctlInitialize(); }
-void   pctl_ops_exit(void) { pctlExit(); }
+static bool s_owned_open = false;
+
+Result pctl_ops_init(void)
+{
+    if (s_owned_open) return 0;
+    Result rc = pctlInitialize();
+    if (R_SUCCEEDED(rc)) s_owned_open = true;
+    return rc;
+}
+
+void pctl_ops_exit(void)
+{
+    if (!s_owned_open) return;
+    pctlExit();
+    s_owned_open = false;
+}
 
 Result pctl_ops_reinit(void)
 {
-    // main() holds exactly one pctl reference, so one exit drops the refcount to
-    // zero and actually closes the (possibly dead) session; init reopens a fresh one.
-    pctlExit();
-    return pctlInitialize();
+    // Release only this layer's reference before acquiring a fresh session.
+    pctl_ops_exit();
+    return pctl_ops_init();
 }
 
 void pctl_status_fetch(PctlStatus *out)
 {
     memset(out, 0, sizeof(*out));
+    if (R_FAILED(pctl_ops_init())) return;
     Service *srv = pctlGetServiceSession_Service();
 
     u32 level = 0;
@@ -81,38 +95,48 @@ void pctl_status_fetch(PctlStatus *out)
         out->restriction_enabled = enabled;
         out->restriction_enabled_ok = true;
     }
+    pctl_ops_exit();
 }
 
 Result pctl_set_pin(void)
 {
 #ifdef PCTL_READ_ONLY
+    pctl_ops_exit();
     return PCTL_READ_ONLY_ERROR;
 #else
     // The pctlauth applet opens its own privileged pctl session; on some firmware
-    // versions that fails while our process still holds one, so drop ours around
-    // the call (this exit/init dance is needed).
-    pctlExit();
-    Result rc = pctlauthRegisterPasscode();
-    pctlInitialize();   // re-open our session; a failure here surfaces on the next op
-    return rc;
+    // versions that fails while our process still holds one. Release ours before
+    // opening the system UI; the next operation acquires a session when needed.
+    pctl_ops_exit();
+    return pctlauthRegisterPasscode();
 #endif
 }
 
 Result pctl_delete_parental_controls(void)
 {
 #ifdef PCTL_READ_ONLY
+    pctl_ops_exit();
     return PCTL_READ_ONLY_ERROR;
 #else
-    return serviceDispatch(pctlGetServiceSession_Service(), 1043);
+    Result rc = pctl_ops_init();
+    if (R_FAILED(rc)) return rc;
+    rc = serviceDispatch(pctlGetServiceSession_Service(), 1043);
+    pctl_ops_exit();
+    return rc;
 #endif
 }
 
 Result pctl_delete_pairing(void)
 {
 #ifdef PCTL_READ_ONLY
+    pctl_ops_exit();
     return PCTL_READ_ONLY_ERROR;
 #else
-    return serviceDispatch(pctlGetServiceSession_Service(), 1941);
+    Result rc = pctl_ops_init();
+    if (R_FAILED(rc)) return rc;
+    rc = serviceDispatch(pctlGetServiceSession_Service(), 1941);
+    pctl_ops_exit();
+    return rc;
 #endif
 }
 
@@ -120,6 +144,7 @@ Result pctl_unlock_restriction_temporarily(void)
 {
     // The caller must complete any temporary unlock in the system PIN UI.
     // A management tool cannot authenticate a parent by reading the saved PIN.
+    pctl_ops_exit();
     return (Result)0xF001;
 }
 
@@ -149,16 +174,20 @@ const char *pctl_safety_level_name(u32 level)
 static void rep(char **p, char *end, const char *fmt, ...)
 {
     if (*p >= end) return;
+    size_t available = (size_t)(end - *p);
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(*p, (size_t)(end - *p), fmt, ap);
+    int n = vsnprintf(*p, available, fmt, ap);
     va_end(ap);
-    if (n > 0) { *p += n; if (*p > end) *p = end; }
+    if (n > 0) {
+        if ((size_t)n >= available) *p = end;
+        else *p += n;
+    }
 }
 
 // PlayTimerSettings (fw 22.1.0): u16[34]. Layout, decoded from a console that has
 // a real working limit configured via the companion app:
-//   [0]   = 0x0101    header magic ("enabled & active"; non-zero == IsPlayTimerEnabled)
+//   [0]   = 0x0101    observed header; individual byte semantics are unverified
 //   [1]   = 0x0001    ?
 //   [2..6]= 0         (reserved)
 //   then 7 per-day groups, group n at indices [7+4n .. 7+4n+3]:
@@ -193,6 +222,12 @@ void pctl_play_timer_query(PtState *out)
         out->restricted = b;
         out->restricted_valid = true;
     }
+    b = false;
+    out->temporary_unlocked_rc = serviceDispatchOut(srv, 1006, b);
+    if (R_SUCCEEDED(out->temporary_unlocked_rc)) {
+        out->temporary_unlocked = b;
+        out->temporary_unlocked_valid = true;
+    }
     u64 rem = 0;
     out->remaining_attempted = true;
     out->remaining_rc = serviceDispatchOut(srv, 1454, rem);
@@ -209,23 +244,37 @@ void pctl_play_timer_query(PtState *out)
         for (int n = 0; n < 7; n++)
             out->day_min[n] = c[7 + 4 * n + 1] ? c[7 + 4 * n + 2] : PT_DAY_NOLIMIT;
     }
+    pctl_ops_exit();
 }
 
 Result pctl_play_timer_set_days(const u16 days_min[7])
 {
 #ifdef PCTL_READ_ONLY
     (void)days_min;
+    pctl_ops_exit();
     return PCTL_READ_ONLY_ERROR;
 #else
     Result ir = pctl_ops_reinit();
     if (R_FAILED(ir)) return ir;
+
+    // Apply the same gate to uniform, per-day and clear writes. Query within
+    // this operation's session so no caller can bypass the UI check.
+    Service *srv = pctlGetServiceSession_Service();
+    bool enabled = false, restricted = false, unlocked = false;
+    Result rc = serviceDispatchOut(srv, 1453, enabled);
+    if (R_SUCCEEDED(rc)) rc = serviceDispatchOut(srv, 1455, restricted);
+    if (R_SUCCEEDED(rc)) rc = serviceDispatchOut(srv, 1006, unlocked);
+    if (R_FAILED(rc) || ((enabled || restricted) && !unlocked)) {
+        pctl_ops_exit();
+        return R_FAILED(rc) ? rc : (Result)0xF001;
+    }
 
     bool any = false;
     for (int n = 0; n < 7; n++) if (days_min[n] != PT_DAY_NOLIMIT) any = true;
 
     u16 c[34] = {0};
     if (any) {
-        c[0] = 0x0101;   // header magic (matches a real configured-via-app limit)
+        c[0] = 0x0101;   // observed configuration header; flag semantics unverified
         c[1] = 0x0001;
         // c[2..6] = 0
         for (int n = 0; n < 7; n++) {              // 7 per-day groups, group n at [7+4n..7+4n+3]
@@ -237,7 +286,9 @@ Result pctl_play_timer_set_days(const u16 days_min[7])
         }
     }
     // !any: all-zero struct -> the play timer is turned off, IsPlayTimerEnabled becomes false
-    return serviceDispatchIn(pctlGetServiceSession_Service(), 195101, c);   // SetPlayTimerSettingsForDebug
+    rc = serviceDispatchIn(srv, 195101, c);   // SetPlayTimerSettingsForDebug
+    pctl_ops_exit();
+    return rc;
 #endif
 }
 
@@ -257,7 +308,7 @@ Result pctl_play_timer_clear(void)
 
 void pctl_play_timer_dump(char *buf, size_t bufsz)
 {
-    if (bufsz == 0) return;
+    if (bufsz == 0) { pctl_ops_exit(); return; }
     char *p = buf, *e = buf + bufsz;
     buf[0] = '\0';
 
@@ -310,8 +361,8 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
           for (int i = 0; i < 0x20; i++) { rep(&p, e, "%02X ", b[i]); if ((i & 15) == 15) rep(&p, e, "\n"); }
       rep(&p, e, "\n"); }
 
-    // Restriction state and whether a PIN is configured. Do not read PIN content
-    // in diagnostics, even if a report would mask it before writing to disk.
+    // Restriction state and whether a PIN is configured. PIN contents are never
+    // included in the diagnostic report.
     ir = pctl_ops_reinit();
     if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1031 failed: 0x%08X\n", (unsigned)ir); return; }
     srv = pctlGetServiceSession_Service();
@@ -336,5 +387,18 @@ void pctl_play_timer_dump(char *buf, size_t bufsz)
           .buffers = { { pin, sizeof(pin) } });
       memset(pin, 0, sizeof(pin));
       rep(&p, e, "1208 GetPinCode                   : rc=0x%08X  content=not recorded\n", (unsigned)r); }
+    // SwIPC defines a single TimeSpanType output. Keep raw bytes/rc because
+    // this test command's behavior on the target firmware is not yet verified.
+    ir = pctl_ops_reinit();
+    if (R_FAILED(ir)) { rep(&p, e, "reconnect before 1952 failed: 0x%08X\n", (unsigned)ir); return; }
+    srv = pctlGetServiceSession_Service();
+    { u64 raw = 0; Result r = serviceDispatchOut(srv, 1952, raw);
+      rep(&p, e, "1952 GetPlayTimerSpentTimeForTest  : rc=0x%08X", (unsigned)r);
+      if (R_SUCCEEDED(r)) rep(&p, e, " raw=0x%016llX (%llu); TimeSpan ns interpretation unverified on target",
+          (unsigned long long)raw, (unsigned long long)raw);
+      else rep(&p, e, " value=unavailable");
+      rep(&p, e, "\n"); }
+    pctl_ops_exit();
+    rep(&p, e, "\nTool-owned pctl session released before returning to UI.\n");
 }
 

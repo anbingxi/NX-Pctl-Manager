@@ -13,6 +13,9 @@ bool init()
     Result rc     = pctl_ops_init();
     s_init_result = (uint32_t)rc;
     s_ok          = R_SUCCEEDED(rc);
+    // Probe availability without keeping the single privileged session occupied.
+    // Each service operation opens and releases its own reference.
+    if (s_ok) pctl_ops_exit();
     return s_ok;
 }
 

@@ -13,13 +13,13 @@ void ready_to_write(std::function<void(bool, bool)> on_ready)
     PtState pt;
     pctl_play_timer_query(&pt);
 
-    if (!pt.enabled_valid || !pt.valid || !pt.restricted_valid) {
+    if (!pt.enabled_valid || !pt.valid || !pt.restricted_valid || !pt.temporary_unlocked_valid) {
         brls::Application::notify("Play timer state is unknown; could not verify that changing it is safe.");
         on_ready(false, false);
         return;
     }
 
-    if (pt.enabled) {
+    if ((pt.enabled || pt.restricted) && !pt.temporary_unlocked) {
         brls::Application::notify("Use the system parental-control screen and PIN to temporarily unlock, then try again.");
         on_ready(false, false);
         return;
